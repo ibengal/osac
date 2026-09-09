@@ -216,3 +216,6 @@ cython_debug/
 **/server-ssh-key
 **/server-ssh-bastion-key
 osac-installer/charts/osac/tmpcharts*/
+
+# Local agent runtime state
+.omc/
