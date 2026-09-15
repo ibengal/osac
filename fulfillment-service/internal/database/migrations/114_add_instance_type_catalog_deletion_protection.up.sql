@@ -15,6 +15,13 @@
 -- as bare strings in the top-level field_definitions array. Extend the existing delete-protection function from
 -- migration 90 so an active catalog item cannot retain a dangling spec.instance_type reference. The trigger wiring is
 -- unchanged because CREATE OR REPLACE updates the function executed by the existing trigger.
+
+-- Index active catalog-item field definitions so the outbound reference check doesn't scan and expand every catalog
+-- item when an instance type is deleted. jsonb_path_ops supports the containment lookup used by the trigger function.
+create index compute_instance_catalog_items_instance_type
+  on compute_instance_catalog_items using gin ((data->'field_definitions') jsonb_path_ops)
+  where deletion_timestamp = 'epoch';
+
 create or replace function check_instance_type_not_in_use() returns trigger as $$
 begin
   if exists (
@@ -48,15 +55,11 @@ begin
   if exists (
     select 1
     from compute_instance_catalog_items
-    cross join lateral jsonb_array_elements(
-      case when jsonb_typeof(compute_instance_catalog_items.data->'field_definitions') = 'array'
-        then compute_instance_catalog_items.data->'field_definitions'
-        else '[]'::jsonb
-      end
-    ) as fd
     where compute_instance_catalog_items.deletion_timestamp = 'epoch'
-      and fd->>'path' = 'spec.instance_type'
-      and fd->>'default' = old.name
+      and jsonb_typeof(compute_instance_catalog_items.data->'field_definitions') = 'array'
+      and compute_instance_catalog_items.data->'field_definitions' @> jsonb_build_array(
+        jsonb_build_object('path', 'spec.instance_type', 'default', old.name)
+      )
   ) then
     raise exception using
       errcode = 'Z0003',

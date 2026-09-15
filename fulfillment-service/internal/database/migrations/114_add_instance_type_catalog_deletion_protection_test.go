@@ -54,6 +54,19 @@ var _ = DescribeMigration("Add instance type catalog deletion protection", func(
 		Expect(pgErr.Message).To(ContainSubstring(id))
 	}
 
+	It("creates a partial GIN index for active catalog-item field definitions", func(ctx context.Context) {
+		var indexDefinition string
+		err := conn.QueryRow(ctx, `
+			select indexdef
+			from pg_indexes
+			where schemaname = current_schema()
+			  and indexname = 'compute_instance_catalog_items_instance_type'`).Scan(&indexDefinition)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(indexDefinition).To(ContainSubstring("USING gin"))
+		Expect(indexDefinition).To(ContainSubstring("jsonb_path_ops"))
+		Expect(indexDefinition).To(ContainSubstring("deletion_timestamp"))
+	})
+
 	It("prevents soft-deleting an instance type referenced by an active catalog item", func(ctx context.Context) {
 		insertInstanceType(ctx, "referenced-type")
 
