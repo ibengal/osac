@@ -18,6 +18,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	. "github.com/onsi/ginkgo/v2/dsl/core"
 	. "github.com/onsi/gomega"
@@ -61,6 +62,14 @@ var _ = DescribeMigration("Add instance type catalog deletion protection", func(
 		Expect(errors.As(err, &pgErr)).To(BeTrue())
 		Expect(pgErr.Code).To(Equal("Z0002"))
 		Expect(pgErr.Message).To(ContainSubstring(id))
+	}
+
+	rollbackTx := func(ctx context.Context, tx pgx.Tx) {
+		err := tx.Rollback(ctx)
+		// A committed transaction is already closed when cleanup runs; all other rollback errors are unexpected.
+		if !errors.Is(err, pgx.ErrTxClosed) {
+			Expect(err).ToNot(HaveOccurred())
+		}
 	}
 
 	It("creates a partial GIN index for active catalog-item field definitions", func(ctx context.Context) {
@@ -132,7 +141,7 @@ var _ = DescribeMigration("Add instance type catalog deletion protection", func(
 
 		deleteTx, err := deleteConn.Begin(ctx)
 		Expect(err).ToNot(HaveOccurred())
-		DeferCleanup(func(ctx context.Context) { _ = deleteTx.Rollback(ctx) })
+		DeferCleanup(func(ctx context.Context) { rollbackTx(ctx, deleteTx) })
 		_, err = deleteTx.Exec(ctx, `
 			update instance_types set deletion_timestamp = now() where id = 'delete-first-type'`)
 		Expect(err).ToNot(HaveOccurred())
@@ -177,7 +186,7 @@ var _ = DescribeMigration("Add instance type catalog deletion protection", func(
 
 		createTx, err := createConn.Begin(ctx)
 		Expect(err).ToNot(HaveOccurred())
-		DeferCleanup(func(ctx context.Context) { _ = createTx.Rollback(ctx) })
+		DeferCleanup(func(ctx context.Context) { rollbackTx(ctx, createTx) })
 		_, err = createTx.Exec(ctx, `
 			insert into compute_instance_catalog_items (id, name, tenant, data)
 			values ('locking-catalog-item', 'locking-catalog-item', 'test-tenant',
