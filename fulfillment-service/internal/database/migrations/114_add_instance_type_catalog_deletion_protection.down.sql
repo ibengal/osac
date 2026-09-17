@@ -12,6 +12,8 @@
 --
 
 -- Restore migration 90's delete-protection function. The existing trigger remains attached to instance_types.
+drop trigger check_compute_instance_catalog_item_instance_type_ref on compute_instance_catalog_items;
+drop function check_compute_instance_catalog_item_instance_type_ref();
 drop index compute_instance_catalog_items_instance_type;
 
 create or replace function check_instance_type_not_in_use() returns trigger as $$

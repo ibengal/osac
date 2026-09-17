@@ -22,6 +22,56 @@ create index compute_instance_catalog_items_instance_type
   on compute_instance_catalog_items using gin ((data->'field_definitions') jsonb_path_ops)
   where deletion_timestamp = 'epoch';
 
+-- OSAC-4211: Validate each catalog-item instance type reference while holding a row lock that conflicts with a
+-- concurrent instance type soft-delete. The application-level validation is an unlocked read, so it cannot by itself
+-- prevent a delete from committing between validation and the catalog-item write.
+create function check_compute_instance_catalog_item_instance_type_ref() returns trigger as $$
+declare
+  field_definition jsonb;
+  instance_type_name text;
+  found_id text;
+begin
+  if jsonb_typeof(new.data->'field_definitions') != 'array' then
+    return new;
+  end if;
+
+  for field_definition in
+    select value from jsonb_array_elements(new.data->'field_definitions')
+  loop
+    if field_definition->>'path' = 'spec.instance_type'
+      and jsonb_typeof(field_definition->'default') = 'string'
+    then
+      instance_type_name := field_definition->>'default';
+      if coalesce(instance_type_name, '') != '' then
+        found_id := null;
+        select id into found_id
+        from instance_types
+        where id = instance_type_name
+          and deletion_timestamp = 'epoch'
+        for share;
+
+        if found_id is null then
+          raise exception using
+            errcode = 'Z0002',
+            message = format(
+              'instance type ''%s'' does not exist or has been deleted',
+              instance_type_name
+            );
+        end if;
+      end if;
+    end if;
+  end loop;
+
+  return new;
+end;
+$$ language plpgsql;
+
+create trigger check_compute_instance_catalog_item_instance_type_ref
+  before insert or update of data, deletion_timestamp on compute_instance_catalog_items
+  for each row
+  when (new.deletion_timestamp = 'epoch')
+  execute function check_compute_instance_catalog_item_instance_type_ref();
+
 create or replace function check_instance_type_not_in_use() returns trigger as $$
 begin
   if exists (
