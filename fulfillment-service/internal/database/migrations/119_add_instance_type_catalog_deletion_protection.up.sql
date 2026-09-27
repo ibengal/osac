@@ -13,7 +13,7 @@
 
 -- Instance types use their name as their primary key, and compute instance catalog items store instance type defaults
 -- as bare strings in the top-level field_definitions array. Extend the existing delete-protection function from
--- migration 90 so an active catalog item cannot retain a dangling spec.instance_type reference. The trigger wiring is
+-- migration 114 so an active catalog item cannot retain a dangling spec.instance_type reference. The trigger wiring is
 -- unchanged because CREATE OR REPLACE updates the function executed by the existing trigger.
 
 -- Index active catalog-item field definitions so the outbound reference check doesn't scan and expand every catalog
@@ -100,6 +100,20 @@ begin
         'cannot delete instance type ''%s'': it is in use by at least one compute instance template',
         old.id
       );
+  end if;
+
+  -- Preserve migration 114's protection for typed catalog policies.
+  if exists (
+    select 1 from compute_instance_catalog_items c
+    where c.deletion_timestamp = 'epoch'
+      and (
+        c.data->'fields'->'instance_type'->'locked'->>'id' = old.id
+        or c.data->'fields'->'instance_type'->'editable'->'default_value'->>'id' = old.id
+      )
+  ) then
+    raise exception using
+      errcode = 'Z0003',
+      message = format('cannot delete instance type ''%s'': it is in use by an active resource or catalog policy', old.id);
   end if;
 
   if exists (

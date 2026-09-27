@@ -11,7 +11,8 @@
 -- specific language governing permissions and limitations under the License.
 --
 
--- Restore migration 90's delete-protection function. The existing trigger remains attached to instance_types.
+-- Restore migration 114's delete-protection function, including typed catalog policies.
+-- The existing trigger remains attached to instance_types.
 drop trigger check_compute_instance_catalog_item_instance_type_ref on compute_instance_catalog_items;
 drop function check_compute_instance_catalog_item_instance_type_ref();
 drop index compute_instance_catalog_items_instance_type;
@@ -44,6 +45,19 @@ begin
         'cannot delete instance type ''%s'': it is in use by at least one compute instance template',
         old.id
       );
+  end if;
+
+  if exists (
+    select 1 from compute_instance_catalog_items c
+    where c.deletion_timestamp = 'epoch'
+      and (
+        c.data->'fields'->'instance_type'->'locked'->>'id' = old.id
+        or c.data->'fields'->'instance_type'->'editable'->'default_value'->>'id' = old.id
+      )
+  ) then
+    raise exception using
+      errcode = 'Z0003',
+      message = format('cannot delete instance type ''%s'': it is in use by an active resource or catalog policy', old.id);
   end if;
 
   return new;

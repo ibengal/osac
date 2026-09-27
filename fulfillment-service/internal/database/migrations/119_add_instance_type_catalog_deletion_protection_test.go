@@ -26,7 +26,7 @@ import (
 
 var _ = DescribeMigration("Add instance type catalog deletion protection", func() {
 	BeforeEach(func(ctx context.Context) {
-		err := tool.Migrate(ctx, 114)
+		err := tool.Migrate(ctx, 119)
 		Expect(err).ToNot(HaveOccurred())
 
 		_, err = conn.Exec(ctx, `
@@ -291,5 +291,17 @@ var _ = DescribeMigration("Add instance type catalog deletion protection", func(
 		Expect(err).ToNot(HaveOccurred())
 
 		expectInUse(softDeleteInstanceType(ctx, "instance-type"), "instance-type")
+	})
+
+	It("preserves typed catalog policy deletion protection", func(ctx context.Context) {
+		insertInstanceType(ctx, "policy-type")
+
+		_, err := conn.Exec(ctx, `
+			insert into compute_instance_catalog_items (id, name, tenant, data)
+			values ($1, $1, 'test-tenant', $2::jsonb)`,
+			"typed-policy", `{"fields":{"instance_type":{"locked":{"id":"policy-type"}}}}`)
+		Expect(err).ToNot(HaveOccurred())
+
+		expectInUse(softDeleteInstanceType(ctx, "policy-type"), "policy-type")
 	})
 })
