@@ -114,6 +114,14 @@ and asserts Create and public Get return the tenant default Subnet and
 SecurityGroup IDs; fixtures simulate network readiness. Run it through the
 `SUITE=fulfillment` installer target above.
 
+ComputeInstance status-only reference validation has unit coverage in
+`internal/references/reference_validator_test.go`. The deployed Fulfillment
+API and database boundary is covered in `it/it_compute_instance_update_test.go`:
+it removes a referenced Secret during deletion and checks that private status
+feedback persists while spec and mixed updates remain rejected. VMaaS teardown
+through the operator and provider is covered by
+`../tests/e2e/vmaas/regression/test_compute_instance_disk_image.py`.
+
 ```bash
 export KUBECONFIG="$HOME/.kube/osac-dev-kind.kubeconfig"
 make -C ../osac-installer install-infra PLATFORM=kind PROFILE=dev NS=osac
