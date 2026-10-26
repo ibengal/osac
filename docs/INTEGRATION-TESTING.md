@@ -186,6 +186,56 @@ Touched-area requirements: [component guide](../fulfillment-service/AGENTS.md#in
 | Component integration ([DEV] OSAC-6307) | `internal/servers` and `internal/database/migrations/126_hold_external_ip_capacity_until_archive_test.go`; from `fulfillment-service/`, run `go test ./internal/servers ./internal/database/migrations -timeout 20m` | Fulfillment server logic and PostgreSQL test container, including archive-time capacity and exclusivity for terminating consumers | Kubernetes and provider cleanup are not run; release completion is exercised by operator tests with provider fixtures. |
 | E2E | `../tests/e2e/` | Cross-component OSAC user journeys | Depends on the deployed test environment and its configured providers. |
 
+### Fulfillment integration timings
+
+The `SUITE=fulfillment` installer target uses Ginkgo's native `--json-report`
+flag when `FULFILLMENT_IT_REPORT_DIR` is set. The default is empty: local runs
+neither generate nor clear reports. To opt in from the repository root, run:
+
+```bash
+make -C osac-installer test PLATFORM=kind PROFILE=dev NS=osac SUITE=fulfillment FULFILLMENT_IT_REPORT_DIR=../fulfillment-service/logs/timings
+```
+
+Relative directories resolve from `osac-installer/`. CI sets an absolute
+`FULFILLMENT_IT_REPORT_DIR` under `fulfillment-service/logs/timings/`, which its
+existing `logs` artifact includes. The four phases write `service-only.json`,
+`manager-capability.json`, `manager-readiness.json`, and `bmaas-disabled.json`.
+When reporting is enabled, those four prior files are cleared before the run
+so a reused local directory cannot retain stale reports for unreached phases.
+A missing report does not imply a passing phase. Use the originating Actions
+run to identify the tested revision.
+
+These reports are for maintainers investigating CI runtime or comparing fixture
+costs before and after an optimization. Download the artifact and inspect its
+native Ginkgo suite and spec reports. Total runtime, status, attempts, seed,
+suite configuration, and node events support analysis outside the test suite.
+For example, list executed specs from a downloaded report with:
+
+```bash
+jq '.[] | .SpecReports[]
+    | select(.LeafNodeType == "It" and .State != "skipped" and .State != "pending")
+    | {name: ((.ContainerHierarchyTexts + [.LeafNodeText]) | join(" ")),
+       seconds: (.RunTime / 1000000000)}' service-only.json
+```
+
+Native reports include captured output, failures, and report entries, and
+should be handled as CI diagnostic logs. They are not sanitized timing-only
+summaries. Ginkgo documents the format in
+[machine-readable reporting](https://onsi.github.io/ginkgo/#generating-machine-readable-reports).
+
+Fixtures called inside an `It` remain part of its body; node timings do not
+separate that fixture work. Build, deployment and test compilation time are
+outside suite runtime; use Actions step timestamps and build logs for those
+costs. Runtime savings require comparable deployed runs and are not established
+by unit tests.
+
+Run `go test ./it -run TestCatalogItemDeletionProbe` from `fulfillment-service/`
+for unit coverage of deletion observation, signal throttling, cancellation, and
+concurrent archival using callback doubles. Catalog cleanup observes every
+200ms, keeps its five-minute bound, and signals no more often than every two
+seconds; it waits for archival before removing dependencies. The complete
+installer command in the tier table remains the component-integration check.
+
 ### Coverage notes
 
 - **Tenant storage onboarding projection ([OSAC-6575](https://redhat.atlassian.net/browse/OSAC-6575), DEV):** `internal/controllers/tenant/tenant_storage_onboarding_test.go` covers exact operator condition projection, missing/unknown evidence, source isolation, timestamps, and unchanged observations through the reconciler with mocked hub and Kubernetes clients. `it/it_tenant_storage_onboarding_test.go` exercises operator Tenant CR status to explicit private Tenant `Signal` to persisted private API status using real Kubernetes, the deployed Fulfillment controller/API, and PostgreSQL. Run the Fulfillment installer target above, or `ginkgo run --timeout 20m --focus 'Tenant storage onboarding feedback' it` against a compatible deployed environment. The fixture supplies the operator condition; it does not prove automatic feedback-watch delivery, storage readiness calculation ([OSAC-6447](https://redhat.atlassian.net/browse/OSAC-6447)), or VM consumption ([OSAC-6596](https://redhat.atlassian.net/browse/OSAC-6596)).
@@ -252,7 +302,8 @@ MCE or call an Operator catalog or cluster API.
 
 The `make -C osac-installer kind-runtime-test` unit suite is owned by installer
 implementation work. It uses command stubs to check runtime selection, sudo
-authentication and credential expiry, Makefile/host setup routing, safe
+authentication and credential expiry, Makefile/host setup routing, native
+Ginkgo report opt-in and output-path configuration for all four phases, safe
 credential reset, resuming stopped nodes after storage preparation and waiting
 for API readiness, Helm 3/4 apply flags for devstack and OSAC releases,
 image loading without virtualization prerequisites or
